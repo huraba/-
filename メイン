@@ -1,0 +1,374 @@
+function MainComponent() {
+  const [images, setImages] = useState([]);
+  const [gameState, setGameState] = useState("generate");
+  const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
+  const [shuffledImages, setShuffledImages] = useState([]);
+  const [userInput, setUserInput] = useState("");
+  const [score, setScore] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [themeIsLocked, setThemeIsLocked] = useState(false);
+  const [selectedTheme, setSelectedTheme] = useState(null);
+  const themeAttributes = {
+    動物: {
+      印象: ["可愛い", "格好いい", "愛らしい", "神秘的", "ユーモラス"],
+      スタイル: [
+        "ディズニー風",
+        "ジブリ風",
+        "水彩画風",
+        "ピクサー風",
+        "写実的",
+      ],
+      追加設定: "no humans, no people, animal only",
+    },
+    建物: {
+      印象: ["壮大な", "モダンな", "古典的な", "未来的な", "幻想的な"],
+      スタイル: [
+        "建築写真風",
+        "水彩画風",
+        "油絵風",
+        "ミニチュア風",
+        "レトロ風",
+      ],
+      追加設定: "architecture only, building only",
+    },
+    自然: {
+      印象: ["雄大な", "穏やかな", "荘厳な", "神秘的な", "幻想的な"],
+      スタイル: [
+        "風景写真風",
+        "油絵風",
+        "水彩画風",
+        "印象派風",
+        "ファンタジー風",
+      ],
+      追加設定: "landscape only",
+    },
+    食べ物: {
+      印象: ["美味しそうな", "豪華な", "可愛い", "芸術的な", "家庭的な"],
+      スタイル: [
+        "料理写真風",
+        "水彩画風",
+        "イラスト風",
+        "ポップアート風",
+        "レトロ風",
+      ],
+      追加設定: "food only",
+    },
+  };
+  const generateImage = async () => {
+    if (!selectedTheme) {
+      setMessage("テーマを選択してください！");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("画像を生成中...");
+    setThemeIsLocked(true);
+
+    try {
+      const attributes = themeAttributes[selectedTheme];
+      const randomImpression =
+        attributes.印象[Math.floor(Math.random() * attributes.印象.length)];
+      const randomStyle =
+        attributes.スタイル[
+          Math.floor(Math.random() * attributes.スタイル.length)
+        ];
+      const prompt = `${randomImpression} ${selectedTheme}, ${randomStyle}, ${attributes.追加設定}, high quality, detailed`;
+      const response = await fetch(
+        `/integrations/stable-diffusion-v-3/?prompt=${encodeURIComponent(
+          prompt,
+        )}&width=512&height=512`,
+        {
+          method: "GET",
+        },
+      );
+      const data = await response.json();
+      if (!data.data || !data.data[0]) {
+        throw new Error("画像の生成に失敗しました");
+      }
+      const imageUrl = data.data[0];
+
+      // 画像をbase64に変換
+      const imageResponse = await fetch(imageUrl);
+      const blob = await imageResponse.blob();
+      const reader = new FileReader();
+      const base64Image = await new Promise((resolve) => {
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+      });
+      const existingNames = images.map((img) => img.name);
+      let imageName = "";
+      let attempts = 0;
+      const maxAttempts = 5; // 増やす
+
+      while (attempts < maxAttempts) {
+        try {
+          const visionPrompt = `この${selectedTheme}の画像を見て、以下の条件で名前をつけてください：
+             1. 画像の以下の要素を細かく観察してください：
+                - 色彩や光の特徴
+                - 形状や構造の特徴
+                - テクスチャや質感
+                - 全体的な印象や雰囲気
+             2. 上記の特徴から連想される言葉やイメージを組み合わせて、2-6文字の独創的な名前を作ってください
+             3. 名前には以下のような要素を含めることができます：
+                - 視覚的特徴を表す言葉の一部
+                - 感情や印象を表す言葉の一部
+                - 連想されるイメージを表す比喩的な表現
+             4. 以下は避けてください：
+                - 「${selectedTheme}1」「${selectedTheme}2」のような単純な名前
+                - ${selectedTheme}の種類をそのまま使用
+                - ${existingNames.join(", ")} （既に使用済み）
+                - 一般的すぎる名前
+             5. ひらがな、カタカナ、漢字を自由に組み合わせて、印象的で魅力的な名前にしてください
+             6. 必ず2-6文字の範囲内で名前をつけてください
+             名前のみを返してください。説明は不要です。`;
+          const visionResponse = await fetch("/integrations/gpt-vision/", {
+            method: "POST",
+            body: JSON.stringify({
+              messages: [
+                {
+                  role: "user",
+                  content: [
+                    {
+                      type: "text",
+                      text: visionPrompt,
+                    },
+                    {
+                      type: "image_url",
+                      image_url: {
+                        url: base64Image,
+                      },
+                    },
+                  ],
+                },
+              ],
+            }),
+          });
+
+          if (!visionResponse.ok) {
+            attempts++;
+            continue;
+          }
+
+          const visionData = await visionResponse.json();
+          if (
+            !visionData.choices ||
+            !visionData.choices[0] ||
+            !visionData.choices[0].message
+          ) {
+            attempts++;
+            continue;
+          }
+
+          const newName = visionData.choices[0].message.content.trim();
+          if (
+            newName &&
+            !existingNames.includes(newName) &&
+            newName.length >= 2 &&
+            newName.length <= 6
+          ) {
+            imageName = newName;
+            break;
+          }
+          attempts++;
+        } catch (visionError) {
+          console.error("Vision APIエラー:", visionError);
+          attempts++;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // APIの呼び出し間に少し待機
+      }
+
+      if (!imageName) {
+        imageName = `${selectedTheme}${images.length + 1}`;
+      }
+
+      const newImage = {
+        url: imageUrl,
+        name: imageName,
+        impression: randomImpression,
+        style: randomStyle,
+      };
+
+      setImages((prev) => [...prev, newImage]);
+      setMessage(`新しい画像が生成されました！\n名前: ${imageName}`);
+    } catch (error) {
+      console.error("エラー詳細:", error);
+      setMessage(
+        "申し訳ありませんが、画像の生成中にエラーが発生しました。もう一度お試しください。",
+      );
+    }
+
+    setLoading(false);
+  };
+  const startQuiz = () => {
+    if (images.length < 3) {
+      setMessage("クイズを始めるには最低3枚の画像が必要です！");
+      return;
+    }
+
+    const shuffled = [...images].sort(() => Math.random() - 0.5);
+    setShuffledImages(shuffled);
+    setCurrentQuizIndex(0);
+    setScore(0);
+    setGameState("quiz");
+    setMessage("クイズの開始！画像の名前を思い出してください！");
+  };
+  const checkAnswer = () => {
+    if (
+      userInput.trim().toLowerCase() ===
+      shuffledImages[currentQuizIndex].name.toLowerCase()
+    ) {
+      setScore((prev) => prev + 1);
+      setMessage("正解！");
+    } else {
+      setMessage(
+        "不正解... 正解は" + shuffledImages[currentQuizIndex].name + "でした",
+      );
+    }
+
+    setUserInput("");
+
+    if (currentQuizIndex + 1 < shuffledImages.length) {
+      setTimeout(() => {
+        setCurrentQuizIndex((prev) => prev + 1);
+        setMessage("次の画像の名前は？");
+      }, 2000);
+    } else {
+      setTimeout(() => {
+        setGameState("generate");
+        setMessage(`クイズ終了！スコア: ${score + 1}/${shuffledImages.length}`);
+      }, 2000);
+    }
+  };
+  const resetImages = () => {
+    setImages([]);
+    setThemeIsLocked(false);
+    setMessage("画像がリセットされました。新しい画像を生成してください。");
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-[#1a1a1a] to-[#2d2d2d] p-8">
+      <div className="max-w-5xl mx-auto">
+        <h1 className="text-5xl font-crimson-text text-center mb-8 text-white tracking-wide">
+          画像当てクイズ
+        </h1>
+
+        <div className="backdrop-blur-lg bg-white/10 rounded-2xl shadow-2xl p-8 border border-white/20">
+          {gameState === "generate" ? (
+            <div className="space-y-6">
+              {!themeIsLocked && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                  {["動物", "建物", "自然", "食べ物"].map((theme) => (
+                    <button
+                      key={theme}
+                      onClick={() => {
+                        setSelectedTheme(theme);
+                        setMessage(`${theme}のテーマが選択されました！`);
+                      }}
+                      className={`p-4 rounded-xl transition-all duration-300 ${
+                        selectedTheme === theme
+                          ? "bg-[#4a5aff] text-white"
+                          : "bg-white/10 text-white/80 hover:bg-white/20"
+                      }`}
+                    >
+                      {theme}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex justify-center gap-4">
+                <button
+                  onClick={generateImage}
+                  disabled={loading || !selectedTheme}
+                  className="relative overflow-hidden bg-gradient-to-r from-[#4a5aff] to-[#2a3bff] text-white px-8 py-3 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl disabled:opacity-50 font-medium border border-[#6b78ff] hover:border-[#8491ff] before:absolute before:inset-0 before:bg-white/10 before:transform before:scale-x-0 before:origin-left hover:before:scale-x-100 before:transition-transform before:duration-300"
+                >
+                  <span className="relative inline-flex items-center">
+                    <i className="fas fa-magic mr-2"></i>
+                    {loading
+                      ? "生成中..."
+                      : `新しい${selectedTheme || ""}画像を生成`}
+                  </span>
+                </button>
+                <button
+                  onClick={startQuiz}
+                  className="relative overflow-hidden bg-gradient-to-r from-[#00d45f] to-[#00b248] text-white px-8 py-3 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl font-medium border border-[#1ee07a] hover:border-[#3ee892] before:absolute before:inset-0 before:bg-white/10 before:transform before:scale-x-0 before:origin-left hover:before:scale-x-100 before:transition-transform before:duration-300"
+                >
+                  <span className="relative inline-flex items-center">
+                    <i className="fas fa-play mr-2"></i>
+                    クイズを始める
+                  </span>
+                </button>
+                {images.length > 0 && (
+                  <button
+                    onClick={resetImages}
+                    className="relative overflow-hidden bg-gradient-to-r from-[#ff2855] to-[#f01542] text-white px-8 py-3 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl font-medium border border-[#ff3d66] hover:border-[#ff5c7d] before:absolute before:inset-0 before:bg-white/10 before:transform before:scale-x-0 before:origin-left hover:before:scale-x-100 before:transition-transform before:duration-300"
+                  >
+                    <span className="relative inline-flex items-center">
+                      <i className="fas fa-trash-alt mr-2"></i>
+                      リセット
+                    </span>
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-8">
+                {images.map((img, index) => (
+                  <div
+                    key={index}
+                    className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 transition-transform hover:scale-105 duration-300"
+                  >
+                    <img
+                      src={img.url}
+                      alt={img.name}
+                      className="w-full h-56 object-cover rounded-lg shadow-md"
+                    />
+                    <p className="text-center mt-4 font-crimson-text text-white text-lg">
+                      {img.name}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="flex flex-col items-center">
+                <img
+                  src={shuffledImages[currentQuizIndex].url}
+                  alt="クイズ画像"
+                  className="w-80 h-80 object-cover rounded-xl shadow-2xl"
+                />
+                <div className="mt-8 w-full max-w-md">
+                  <input
+                    type="text"
+                    value={userInput}
+                    onChange={(e) => setUserInput(e.target.value)}
+                    onKeyPress={(e) => e.key === "Enter" && checkAnswer()}
+                    placeholder="画像の名前を入力してください"
+                    className="w-full px-6 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#3d4dff] transition-all duration-300"
+                  />
+                  <button
+                    onClick={checkAnswer}
+                    className="relative overflow-hidden w-full mt-4 bg-gradient-to-r from-[#4a5aff] to-[#2a3bff] text-white px-6 py-3 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl font-medium border border-[#6b78ff] hover:border-[#8491ff] before:absolute before:inset-0 before:bg-white/10 before:transform before:scale-x-0 before:origin-left hover:before:scale-x-100 before:transition-transform before:duration-300"
+                  >
+                    <span className="relative inline-flex items-center justify-center">
+                      <i className="fas fa-check mr-2"></i>
+                      回答する
+                    </span>
+                  </button>
+                </div>
+                <p className="mt-6 text-xl text-white font-medium">
+                  スコア: {score}/{shuffledImages.length}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {message && (
+            <div className="mt-6 p-5 bg-white/5 backdrop-blur-sm border border-white/20 rounded-xl text-center text-white">
+              {message}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
