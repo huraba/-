@@ -88,7 +88,6 @@ function MainComponent() {
       }
       const imageUrl = data.data[0];
 
-      // 画像をbase64に変換
       const imageResponse = await fetch(imageUrl);
       const blob = await imageResponse.blob();
       const reader = new FileReader();
@@ -99,73 +98,83 @@ function MainComponent() {
       const existingNames = images.map((img) => img.name);
       let imageName = "";
       let attempts = 0;
-      const maxAttempts = 5; // 増やす
+      const maxAttempts = 5;
 
       while (attempts < maxAttempts) {
         try {
           const visionPrompt = `この${selectedTheme}の画像を見て、以下の条件で名前をつけてください：
-             1. 画像の以下の要素を細かく観察してください：
-                - 色彩や光の特徴
-                - 形状や構造の特徴
-                - テクスチャや質感
-                - 全体的な印象や雰囲気
-             2. 上記の特徴から連想される言葉やイメージを組み合わせて、2-6文字の独創的な名前を作ってください
-             3. 名前には以下のような要素を含めることができます：
-                - 視覚的特徴を表す言葉の一部
-                - 感情や印象を表す言葉の一部
-                - 連想されるイメージを表す比喩的な表現
-             4. 以下は避けてください：
-                - 「${selectedTheme}1」「${selectedTheme}2」のような単純な名前
+             1. 画像の特徴を観察：
+                - 色や光の様子
+                - 形や動き
+                - 質感や雰囲気
+                - 全体的な印象
+             2. 名前のルール：
+                - オノマトペを使う（ぽわん、きらり、もふもふなど）
+                - 感情を表す言葉（わくわく、どきどきなど）
+                - 和風な言葉（さくら、かぜ、そらなど）
+                - 独創的な組み合わせ（例：空+光→そらび）
+             3. 避けること：
+                - 「${selectedTheme}1」「${selectedTheme}2」のような数字の使用
                 - ${selectedTheme}の種類をそのまま使用
                 - ${existingNames.join(", ")} （既に使用済み）
-                - 一般的すぎる名前
-             5. ひらがな、カタカナ、漢字を自由に組み合わせて、印象的で魅力的な名前にしてください
-             6. 必ず2-6文字の範囲内で名前をつけてください
+                - 一般的な名詞
+                - アルファベットや数字のみ
+             4. 必須条件：
+                - 2-6文字の範囲
+                - ひらがな、カタカナ、漢字を使用
+                - 画像の特徴を反映
+                - 覚えやすく、呼びやすい
              名前のみを返してください。説明は不要です。`;
-          const visionResponse = await fetch("/integrations/gpt-vision/", {
-            method: "POST",
-            body: JSON.stringify({
-              messages: [
-                {
-                  role: "user",
-                  content: [
-                    {
-                      type: "text",
-                      text: visionPrompt,
-                    },
-                    {
-                      type: "image_url",
-                      image_url: {
-                        url: base64Image,
+          const geminiResponse = await fetch(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-goog-api-key": "AIzaSyCWRvWaiLkKG7JGyBS4KzSVWjRb6o0e21s",
+              },
+              body: JSON.stringify({
+                contents: [
+                  {
+                    parts: [
+                      { text: visionPrompt },
+                      {
+                        inline_data: {
+                          mime_type: "image/jpeg",
+                          data: base64Image.split(",")[1],
+                        },
                       },
-                    },
-                  ],
-                },
-              ],
-            }),
-          });
+                    ],
+                  },
+                ],
+              }),
+            },
+          );
 
-          if (!visionResponse.ok) {
+          if (!geminiResponse.ok) {
             attempts++;
             continue;
           }
 
-          const visionData = await visionResponse.json();
+          const geminiData = await geminiResponse.json();
           if (
-            !visionData.choices ||
-            !visionData.choices[0] ||
-            !visionData.choices[0].message
+            !geminiData.candidates ||
+            !geminiData.candidates[0] ||
+            !geminiData.candidates[0].content
           ) {
             attempts++;
             continue;
           }
 
-          const newName = visionData.choices[0].message.content.trim();
+          const newName = geminiData.candidates[0].content.parts[0].text.trim();
           if (
             newName &&
             !existingNames.includes(newName) &&
             newName.length >= 2 &&
-            newName.length <= 6
+            newName.length <= 6 &&
+            !/^[a-zA-Z0-9]+$/.test(newName) &&
+            !/^\d+$/.test(newName) &&
+            !selectedTheme.includes(newName)
           ) {
             imageName = newName;
             break;
@@ -175,11 +184,22 @@ function MainComponent() {
           console.error("Vision APIエラー:", visionError);
           attempts++;
         }
-        await new Promise((resolve) => setTimeout(resolve, 1000)); // APIの呼び出し間に少し待機
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
       if (!imageName) {
-        imageName = `${selectedTheme}${images.length + 1}`;
+        const defaultNames = {
+          動物: ["ぽちゃぽ", "ふわもこ", "にこにこ", "ぴょんた"],
+          建物: ["そらいろ", "ゆめみる", "ほしぞら", "かぜまち"],
+          自然: ["みどりの", "そよかぜ", "あおぞら", "しずくび"],
+          食べ物: ["ぱくもぐ", "もぐもぐ", "ぺろりん", "あむあむ"],
+        };
+        const randomDefault =
+          defaultNames[selectedTheme][
+            Math.floor(Math.random() * defaultNames[selectedTheme].length)
+          ];
+        const defaultName = randomDefault;
+        imageName = defaultName;
       }
 
       const newImage = {
@@ -372,3 +392,4 @@ function MainComponent() {
     </div>
   );
 }
+
